@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      (() => {
+        const param = new URLSearchParams(window.location.search).get("clawpilotTheme");
+        const theme =
+          param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        document.documentElement.setAttribute("data-theme", theme);
+      })();
+    </script>
+    <title>Azure VM Commitment Reality Check</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">AZURE COST MANAGEMENT</p>
+        <h1>VM Commitment Reality Check</h1>
+      </div>
+      <div id="authStatus" class="status" aria-live="polite"><span class="status-dot"></span>Checking Azure CLI</div>
+    </header>
+
+    <main>
+      <section class="controls" aria-labelledby="analysis-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">AMORTIZED COST</p>
+            <h2 id="analysis-title">VM analysis</h2>
+          </div>
+          <button id="demoButton" class="secondary" type="button">Load example</button>
+        </div>
+        <form id="analysisForm">
+          <label class="scope-field">Azure scope
+            <input id="scope" name="scope" required placeholder="/subscriptions/00000000-0000-0000-0000-000000000000" autocomplete="off" />
+          </label>
+          <label>Start date<input id="start" name="start" type="date" required /></label>
+          <label>End date<input id="end" name="end" type="date" required /></label>
+          <button id="runButton" class="primary" type="submit">Run analysis</button>
+        </form>
+        <p id="message" class="message" aria-live="polite"></p>
+      </section>
+
+      <section id="dashboard" class="dashboard" hidden>
+        <div class="kpi-grid">
+          <article class="kpi"><span>VMs observed</span><strong id="vmCount">0</strong><small>Unique billed resource IDs</small></article>
+          <article class="kpi"><span>PAYG equivalent</span><strong id="paygEquivalent">$0</strong><small>Actual quantity × contract unit price</small></article>
+          <article class="kpi"><span>Actual with benefits</span><strong id="actualWithBenefits">$0</strong><small>Savings Plan + RI + PAYG + waste</small></article>
+          <article class="kpi savings"><span>Net realized savings</span><strong id="netSavings">$0</strong><small id="savingsRate">0.0% savings rate</small></article>
+        </div>
+
+        <div class="analysis-grid">
+          <section class="panel comparison-panel">
+            <div class="section-heading"><div><p class="eyebrow">MONTHLY DELTA</p><h2>PAYG versus commitments</h2></div><strong id="deltaLabel"></strong></div>
+            <div class="bar-row"><span>PAYG</span><div class="bar-track"><div id="paygBar" class="bar payg"></div></div><strong id="paygBarValue"></strong></div>
+            <div class="bar-row"><span>With benefits</span><div class="bar-track"><div id="benefitsBar" class="bar plan"></div></div><strong id="benefitsBarValue"></strong></div>
+            <div class="formula"><span>Savings Plan cost <b id="savingsPlanCost"></b></span><span>RI cost <b id="reservationCost"></b></span><span>PAYG overflow <b id="overflowCost"></b></span><span>Unused Savings Plan <b id="unusedSavingsPlan"></b></span><span>Unused RI <b id="unusedReservation"></b></span></div>
+          </section>
+
+          <section class="panel benefit-panel">
+            <p class="eyebrow">BENEFIT STATUS</p>
+            <h2>Commitments detected</h2>
+            <div class="benefit-row"><div><strong>Savings Plan</strong><span id="savingsPlanStatus" class="benefit-status">None detected</span></div><b id="savingsPlanSavings">$0 saved</b><small id="savingsPlanDetail"></small></div>
+            <div class="benefit-row"><div><strong>Reserved Instances</strong><span id="reservationStatus" class="benefit-status">None detected</span></div><b id="reservationSavings">$0 saved</b><small id="reservationDetail"></small></div>
+          </section>
+        </div>
+
+        <section class="panel trend-panel">
+          <div class="section-heading"><div><p class="eyebrow">DAILY VIEW</p><h2>Cost and savings movement</h2></div><span id="recordCount" class="muted"></span></div>
+          <div id="trend" class="trend" role="img" aria-label="Daily PAYG equivalent and actual cost bars"></div>
+        </section>
+
+        <section id="warnings" class="warnings" hidden><h2>Data notes</h2><ul id="warningList"></ul></section>
+      </section>
+    </main>
+    <script src="/app.js" defer></script>
+  </body>
+</html>
