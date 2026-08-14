@@ -8,14 +8,23 @@ const localDate = (date) => [
   String(date.getMonth() + 1).padStart(2, "0"),
   String(date.getDate()).padStart(2, "0"),
 ].join("-");
+const today = localDate(new Date());
+elements.start.max = today;
+elements.end.max = today;
 elements.start.value = localDate(start);
 elements.end.value = localDate(end);
 
 const money = (value, currency = "USD") => new Intl.NumberFormat(undefined, {
   style: "currency",
   currency,
-  maximumFractionDigits: 0,
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
 }).format(value);
+
+const elapsedTime = (seconds) => {
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+};
 
 async function requestJson(url, options) {
   const response = await fetch(url, options);
@@ -56,19 +65,26 @@ function render(data) {
   elements.reservationDetail.textContent = summary.hasReservations
     ? `${money(summary.reservationCost, currency)} used · ${money(summary.unusedReservation, currency)} unused`
     : "No Reserved Instance usage or charges in this period";
-  elements.recordCount.textContent = `${data.sourceRecordCount.toLocaleString()} source records`;
+  elements.recordCount.textContent = `${data.vmRecordCount.toLocaleString()} VM records from ${data.sourceRecordCount.toLocaleString()} source records`;
 
   const dailyMaximum = Math.max(...data.daily.flatMap((day) => [day.paygEquivalent, day.actualWithBenefits]), 1);
   elements.trend.replaceChildren(...data.daily.map((day) => {
     const column = document.createElement("div");
     column.className = "day";
     column.title = `${day.date}: ${money(day.paygEquivalent, currency)} PAYG / ${money(day.actualWithBenefits, currency)} actual`;
+    const bars = document.createElement("div");
+    bars.className = "day-bars";
     for (const [kind, value] of [["payg", day.paygEquivalent], ["actual", day.actualWithBenefits]]) {
       const bar = document.createElement("span");
       bar.className = `day-bar ${kind}`;
       bar.style.height = `${value / dailyMaximum * 100}%`;
-      column.append(bar);
+      bars.append(bar);
     }
+    const label = document.createElement("span");
+    label.className = "day-label";
+    label.textContent = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", timeZone: "UTC" })
+      .format(new Date(`${day.date}T00:00:00Z`));
+    column.append(bars, label);
     return column;
   }));
 
@@ -95,7 +111,14 @@ elements.analysisForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   elements.runButton.disabled = true;
   elements.runButton.textContent = "Generating report...";
-  elements.message.textContent = "Azure is preparing the amortized cost report. This can take a few minutes.";
+  elements.message.classList.add("loading");
+  const startedAt = Date.now();
+  const updateProgress = () => {
+    const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1_000);
+    elements.message.textContent = `Azure is preparing the amortized cost report (${elapsedTime(elapsedSeconds)} elapsed, 5 minute limit).`;
+  };
+  updateProgress();
+  const progressTimer = setInterval(updateProgress, 1_000);
   try {
     const data = await requestJson("/api/analyze", {
       method: "POST",
@@ -107,6 +130,8 @@ elements.analysisForm.addEventListener("submit", async (event) => {
   } catch (error) {
     elements.message.textContent = error.message;
   } finally {
+    clearInterval(progressTimer);
+    elements.message.classList.remove("loading");
     elements.runButton.disabled = false;
     elements.runButton.textContent = "Run analysis";
   }

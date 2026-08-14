@@ -28,13 +28,26 @@ Open `http://127.0.0.1:4173` and enter either:
 - `/subscriptions/<subscription-id>`
 - An EA/MCA Microsoft Billing scope copied from Azure Cost Management
 
-Choose a completed date range of no more than 31 days. The application requests an `AmortizedCost` report, polls until it is ready, downloads every CSV partition, and calculates:
+Choose a completed date range of no more than 13 months. The application splits longer ranges into monthly Azure requests, polls until each report is ready, downloads every CSV partition, and calculates:
 
 ```text
 PAYG equivalent      = SP-covered PAYG + RI-covered PAYG + PAYG overflow
 Actual with benefits = SP amortized cost + RI amortized cost + PAYG overflow + unused SP + unused RI
 Net realized savings = PAYG equivalent - actual with benefits
 ```
+
+## Stop
+
+If the server is attached to the current terminal, press `Ctrl+C`.
+
+If the prompt has returned but the dashboard is still available, another process is serving port 4173. Stop it from PowerShell:
+
+```powershell
+$connection = Get-NetTCPConnection -LocalPort 4173 -State Listen -ErrorAction SilentlyContinue
+if ($connection) { Stop-Process -Id $connection.OwningProcess }
+```
+
+This project does not define an `npm stop` script.
 
 Use a billing scope to include unallocated `UnusedSavingsPlan` and `UnusedReservation` records. Their absence in a subscription report does not prove 100% utilization. The dashboard explicitly reports when no Savings Plan or Reserved Instance usage is detected.
 

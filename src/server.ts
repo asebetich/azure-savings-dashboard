@@ -5,6 +5,15 @@ import { downloadAmortizedCostRecords, hasAzureSession, isVmSavingsRecord } from
 
 const app = express();
 const port = Number(process.env.PORT ?? 4173);
+const activeAnalyses = new Map<string, Promise<CostRecord[]>>();
+
+function localDate(date = new Date()): string {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+}
 
 app.disable("x-powered-by");
 app.use((_request, response, next) => {
@@ -27,8 +36,13 @@ const analysisRequest = z
     end: z.iso.date(),
   })
   .refine(({ start, end }) => start <= end, { message: "Start date must be on or before end date." })
-  .refine(({ start, end }) => Date.parse(end) - Date.parse(start) <= 31 * 86_400_000, {
-    message: "Choose a range of 31 days or less for an on-demand report.",
+  .refine(({ end }) => end <= localDate(), { message: "End date cannot be after today." })
+  .refine(({ start, end }) => {
+    const maximumEnd = new Date(`${start}T00:00:00Z`);
+    maximumEnd.setUTCMonth(maximumEnd.getUTCMonth() + 13);
+    return Date.parse(end) <= maximumEnd.getTime();
+  }, {
+    message: "Choose a range of 13 months or less.",
   });
 
 function vmCount(records: CostRecord[]): number {
@@ -59,7 +73,20 @@ function result(records: CostRecord[], scope: string) {
     warnings.push("Unused benefit charges are scope-level waste; Azure does not attribute them to an individual VM.");
   }
 
-  return { summary, daily, vmCount: vmCount(vmRecords), sourceRecordCount: records.length, warnings };
+  return { summary, daily, vmCount: vmCount(vmRecords), vmRecordCount: vmRecords.length, sourceRecordCount: records.length, warnings };
+}
+
+function analysisRecords(scope: string, start: string, end: string): Promise<CostRecord[]> {
+  const key = `${scope.toLowerCase()}|${start}|${end}`;
+  const active = activeAnalyses.get(key);
+  if (active) return active;
+
+  const analysis = downloadAmortizedCostRecords(scope, start, end);
+  activeAnalyses.set(key, analysis);
+  void analysis.finally(() => {
+    if (activeAnalyses.get(key) === analysis) activeAnalyses.delete(key);
+  }).catch(() => undefined);
+  return analysis;
 }
 
 app.get("/api/status", async (_request, response) => {
@@ -92,7 +119,7 @@ app.post("/api/analyze", async (request, response) => {
   }
 
   try {
-    const records = await downloadAmortizedCostRecords(parsed.data.scope, parsed.data.start, parsed.data.end);
+    const records = await analysisRecords(parsed.data.scope, parsed.data.start, parsed.data.end);
     response.json(result(records, parsed.data.scope));
   } catch (error) {
     const message = error instanceof Error ? error.message : "The Azure report failed.";
