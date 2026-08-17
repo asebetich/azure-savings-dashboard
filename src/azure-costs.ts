@@ -1,5 +1,7 @@
 import { AzureCliCredential } from "@azure/identity";
-import { parse } from "csv-parse/sync";
+import { Readable } from "node:stream";
+import { parse } from "csv-parse";
+import { parse as parseSync } from "csv-parse/sync";
 import type { CostRecord } from "./calculation.js";
 
 const managementEndpoint = "https://management.azure.com";
@@ -78,6 +80,11 @@ export interface CostDateRange {
   end: string;
 }
 
+export interface CostReport {
+  records: CostRecord[];
+  sourceRecordCount: number;
+}
+
 export function monthlyDateRanges(start: string, end: string): CostDateRange[] {
   const ranges: CostDateRange[] = [];
   const finalDate = new Date(`${end}T00:00:00Z`);
@@ -101,14 +108,17 @@ export async function downloadAmortizedCostRecords(
   scope: string,
   start: string,
   end: string,
-): Promise<CostRecord[]> {
+): Promise<CostReport> {
   const token = await accessToken();
   const deadline = Date.now() + 5 * 60_000;
   const records: CostRecord[] = [];
+  let sourceRecordCount = 0;
   for (const range of monthlyDateRanges(start, end)) {
-    records.push(...await downloadAmortizedCostRange(scope, range.start, range.end, token, deadline));
+    const report = await downloadAmortizedCostRange(scope, range.start, range.end, token, deadline);
+    records.push(...report.records);
+    sourceRecordCount += report.sourceRecordCount;
   }
-  return records;
+  return { records, sourceRecordCount };
 }
 
 async function downloadAmortizedCostRange(
@@ -117,7 +127,7 @@ async function downloadAmortizedCostRange(
   end: string,
   token: string,
   deadline: number,
-): Promise<CostRecord[]> {
+): Promise<CostReport> {
   const createUrl = `${managementEndpoint}${scope}/providers/Microsoft.CostManagement/generateCostDetailsReport?api-version=${apiVersion}`;
   const createResponse = await azureRequest(createUrl, token, deadline, {
     method: "POST",
@@ -148,25 +158,33 @@ async function downloadAmortizedCostRange(
   const links = blobLinks(report);
   if (links.length === 0) throw new Error("Azure completed the report without any downloadable CSV partitions.");
 
-  const partitions = await Promise.all(
-    links.map(async (link) => {
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) throw new Error("The Azure cost report did not finish within five minutes.");
-      const response = await fetch(link, { signal: AbortSignal.timeout(Math.min(60_000, remaining)) });
-      if (!response.ok) throw new Error(`Cost report download failed with ${response.status}.`);
-      return response.text();
-    }),
-  );
+  const records: CostRecord[] = [];
+  let sourceRecordCount = 0;
+  for (const link of links) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error("The Azure cost report did not finish within five minutes.");
+    const response = await fetch(link, { signal: AbortSignal.timeout(remaining) });
+    if (!response.ok) throw new Error(`Cost report download failed with ${response.status}.`);
+    if (!response.body) throw new Error("Cost report download returned no data.");
+    const partition = await parseCostCsvStream(response.body);
+    records.push(...partition.records);
+    sourceRecordCount += partition.sourceRecordCount;
+  }
 
-  return partitions.flatMap(parseCostCsv);
+  return { records, sourceRecordCount };
 }
 
 type CsvRow = Record<string, string>;
+const normalizedRows = new WeakMap<CsvRow, Map<string, string>>();
 
 function field(row: CsvRow, ...names: string[]): string {
-  const normalized = new Map(
-    Object.entries(row).map(([key, value]) => [key.replace(/[\s_]/g, "").toLowerCase(), value]),
-  );
+  let normalized = normalizedRows.get(row);
+  if (!normalized) {
+    normalized = new Map(
+      Object.entries(row).map(([key, value]) => [key.replace(/[\s_]/g, "").toLowerCase(), value]),
+    );
+    normalizedRows.set(row, normalized);
+  }
   for (const name of names) {
     const value = normalized.get(name.replace(/[\s_]/g, "").toLowerCase());
     if (value !== undefined) return value;
@@ -186,9 +204,8 @@ function dateField(row: CsvRow): string {
   return `${match[3]}-${match[1]!.padStart(2, "0")}-${match[2]!.padStart(2, "0")}`;
 }
 
-export function parseCostCsv(csv: string): CostRecord[] {
-  const rows = parse(csv, { bom: true, columns: true, skip_empty_lines: true, relax_column_count: true }) as CsvRow[];
-  return rows.map((row) => ({
+function costRecord(row: CsvRow): CostRecord {
+  return {
     date: dateField(row),
     resourceId: field(row, "ResourceId", "InstanceId"),
     resourceType: field(row, "ResourceType"),
@@ -199,7 +216,26 @@ export function parseCostCsv(csv: string): CostRecord[] {
     unitPrice: numberField(row, "UnitPrice"),
     cost: numberField(row, "CostInBillingCurrency", "Cost"),
     currency: field(row, "BillingCurrencyCode", "BillingCurrency", "Currency") || "USD",
-  }));
+  };
+}
+
+export async function parseCostCsvStream(body: ReadableStream<Uint8Array>): Promise<CostReport> {
+  const parser = parse({ bom: true, columns: true, skip_empty_lines: true, relax_column_count: true });
+  Readable.from(body).pipe(parser);
+
+  const records: CostRecord[] = [];
+  let sourceRecordCount = 0;
+  for await (const row of parser) {
+    sourceRecordCount++;
+    const record = costRecord(row as CsvRow);
+    if (isVmSavingsRecord(record)) records.push(record);
+  }
+  return { records, sourceRecordCount };
+}
+
+export function parseCostCsv(csv: string): CostRecord[] {
+  const rows = parseSync(csv, { bom: true, columns: true, skip_empty_lines: true, relax_column_count: true }) as CsvRow[];
+  return rows.map(costRecord);
 }
 
 export function isVmSavingsRecord(record: CostRecord): boolean {

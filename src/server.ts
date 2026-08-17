@@ -1,11 +1,11 @@
 import express from "express";
 import { z } from "zod";
 import { calculateSavings, type CostRecord } from "./calculation.js";
-import { downloadAmortizedCostRecords, hasAzureSession, isVmSavingsRecord } from "./azure-costs.js";
+import { downloadAmortizedCostRecords, hasAzureSession, isVmSavingsRecord, type CostReport } from "./azure-costs.js";
 
 const app = express();
 const port = Number(process.env.PORT ?? 4173);
-const activeAnalyses = new Map<string, Promise<CostRecord[]>>();
+const activeAnalyses = new Map<string, Promise<CostReport>>();
 
 function localDate(date = new Date()): string {
   return [
@@ -53,7 +53,7 @@ function vmCount(records: CostRecord[]): number {
   ).size;
 }
 
-function result(records: CostRecord[], scope: string) {
+function result(records: CostRecord[], scope: string, sourceRecordCount = records.length) {
   const vmRecords = records.filter(isVmSavingsRecord);
   const summary = calculateSavings(vmRecords);
   const daily = [...new Set(vmRecords.map((record) => record.date).filter(Boolean))]
@@ -73,10 +73,10 @@ function result(records: CostRecord[], scope: string) {
     warnings.push("Unused benefit charges are scope-level waste; Azure does not attribute them to an individual VM.");
   }
 
-  return { summary, daily, vmCount: vmCount(vmRecords), vmRecordCount: vmRecords.length, sourceRecordCount: records.length, warnings };
+  return { summary, daily, vmCount: vmCount(vmRecords), vmRecordCount: vmRecords.length, sourceRecordCount, warnings };
 }
 
-function analysisRecords(scope: string, start: string, end: string): Promise<CostRecord[]> {
+function analysisRecords(scope: string, start: string, end: string): Promise<CostReport> {
   const key = `${scope.toLowerCase()}|${start}|${end}`;
   const active = activeAnalyses.get(key);
   if (active) return active;
@@ -119,8 +119,8 @@ app.post("/api/analyze", async (request, response) => {
   }
 
   try {
-    const records = await analysisRecords(parsed.data.scope, parsed.data.start, parsed.data.end);
-    response.json(result(records, parsed.data.scope));
+    const report = await analysisRecords(parsed.data.scope, parsed.data.start, parsed.data.end);
+    response.json(result(report.records, parsed.data.scope, report.sourceRecordCount));
   } catch (error) {
     const message = error instanceof Error ? error.message : "The Azure report failed.";
     console.error(message);
