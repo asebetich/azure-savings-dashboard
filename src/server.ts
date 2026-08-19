@@ -1,7 +1,7 @@
 import express from "express";
 import { z } from "zod";
 import { calculateSavings, type CostRecord } from "./calculation.js";
-import { downloadAmortizedCostRecords, hasAzureSession, isVmSavingsRecord, type CostReport } from "./azure-costs.js";
+import { downloadAmortizedCostRecords, hasAzureSession, isCommitmentRecord, isVmSavingsRecord, type CostReport } from "./azure-costs.js";
 
 const app = express();
 const port = Number(process.env.PORT ?? 4173);
@@ -53,27 +53,79 @@ function vmCount(records: CostRecord[]): number {
   ).size;
 }
 
+function resourceCount(records: CostRecord[]): number {
+  return new Set(records.filter((record) => record.resourceId).map((record) => record.resourceId.toLowerCase())).size;
+}
+
 function result(records: CostRecord[], scope: string, sourceRecordCount = records.length) {
-  const vmRecords = records.filter(isVmSavingsRecord);
-  const summary = calculateSavings(vmRecords);
+  const usageRecords = records.filter((record) => record.chargeType.trim().toLowerCase() === "usage");
+  const vmRecords = usageRecords.filter(isVmSavingsRecord);
+  const coveredRecords = usageRecords.filter(isCommitmentRecord);
+  const unusedRecords = records.filter(
+    (record) => record.chargeType.trim().toLowerCase() !== "usage" && isCommitmentRecord(record),
+  );
+  const vmSummary = calculateSavings(vmRecords);
+  const coveredSummary = calculateSavings(coveredRecords);
+  const commitmentSummary = calculateSavings([...coveredRecords, ...unusedRecords]);
   const daily = [...new Set(vmRecords.map((record) => record.date).filter(Boolean))]
     .sort()
     .map((date) => ({ date, ...calculateSavings(vmRecords.filter((record) => record.date === date)) }));
   const warnings: string[] = [];
+  const subscriptionScope = scope.toLowerCase().startsWith("/subscriptions/");
 
-  if (!summary.hasSavingsPlan) warnings.push("No Savings Plan usage or charges were detected for these VMs in this period.");
-  if (!summary.hasReservations) warnings.push("No Reserved Instance usage or charges were detected for these VMs in this period.");
-  if (scope.toLowerCase().startsWith("/subscriptions/") && summary.hasSavingsPlan && summary.unusedSavingsPlanRecordCount === 0) {
-    warnings.push("Subscription reports may omit unallocated Savings Plan waste. Use the EA/MCA billing scope to prove it is zero.");
-  }
-  if (scope.toLowerCase().startsWith("/subscriptions/") && summary.hasReservations && summary.unusedReservationRecordCount === 0) {
-    warnings.push("Subscription reports may omit unallocated reservation waste. Use the EA/MCA billing scope to prove it is zero.");
-  }
-  if (summary.totalUnusedCommitment > 0) {
-    warnings.push("Unused benefit charges are scope-level waste; Azure does not attribute them to an individual VM.");
-  }
+  if (sourceRecordCount === 0) warnings.push("Azure found no amortized cost data for this scope and date range.");
+  if (!vmSummary.hasSavingsPlan) warnings.push("No Savings Plan usage was detected for these VMs in this period.");
+  if (!vmSummary.hasReservations) warnings.push("No Reserved Instance usage was detected for these VMs in this period.");
+  if (subscriptionScope) warnings.push("The commitment overview is subscription-visible, not organization-wide. Use an EA/MCA billing scope to include centralized usage and waste.");
+  if (commitmentSummary.totalUnusedCommitment > 0) warnings.push("Unused commitment is scope-level waste and is shown only in the commitment overview.");
 
-  return { summary, daily, vmCount: vmCount(vmRecords), vmRecordCount: vmRecords.length, sourceRecordCount, warnings };
+  const views = {
+    vm: {
+      summary: vmSummary,
+      entityCount: vmCount(vmRecords),
+      entityLabel: "VMs observed",
+      entityDetail: "Unique billed VM resource IDs",
+      savingsLabel: "VM usage savings",
+      description: "VM usage only. Shared unused commitment is excluded because Azure cannot attribute it to one VM.",
+      actualDetail: "VM charges after applied benefits; shared waste excluded",
+      recordLabel: "VM usage records",
+      recordCount: vmRecords.length,
+    },
+    covered: {
+      summary: coveredSummary,
+      entityCount: resourceCount(coveredRecords),
+      entityLabel: "Covered resources",
+      entityDetail: "Unique resources using a commitment",
+      savingsLabel: "Covered usage savings",
+      description: "Savings Plan and reservation-covered usage across all services in the selected scope. Unused commitment is excluded.",
+      actualDetail: "Amortized cost of covered usage; shared waste excluded",
+      recordLabel: "covered usage records",
+      recordCount: coveredRecords.length,
+    },
+    commitment: {
+      summary: commitmentSummary,
+      entityCount: resourceCount(coveredRecords),
+      entityLabel: "Covered resources",
+      entityDetail: "Unique resources using a commitment",
+      savingsLabel: subscriptionScope ? "Visible commitment savings" : "Realized commitment savings",
+      description: subscriptionScope
+        ? "Covered usage plus unused commitment visible to this subscription. Centralized waste may still be omitted."
+        : "Organization-wide covered usage minus used and unused commitment cost at this billing scope.",
+      actualDetail: "Amortized covered usage plus visible unused commitment",
+      recordLabel: "commitment records",
+      recordCount: coveredRecords.length + unusedRecords.length,
+    },
+  };
+
+  return {
+    views,
+    summary: vmSummary,
+    daily,
+    vmCount: vmCount(vmRecords),
+    vmRecordCount: vmRecords.length,
+    sourceRecordCount,
+    warnings,
+  };
 }
 
 function analysisRecords(scope: string, start: string, end: string): Promise<CostReport> {

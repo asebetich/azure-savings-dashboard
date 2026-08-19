@@ -44,11 +44,17 @@
       </section>
 
       <section id="dashboard" class="dashboard" hidden>
+        <div class="view-switcher" role="tablist" aria-label="Analysis view">
+          <button class="view-button active" type="button" role="tab" aria-selected="true" data-view="vm">VM usage</button>
+          <button class="view-button" type="button" role="tab" aria-selected="false" data-view="covered">All covered compute</button>
+          <button class="view-button" type="button" role="tab" aria-selected="false" data-view="commitment">Commitment overview</button>
+        </div>
+        <p id="viewDescription" class="view-description"></p>
         <div class="kpi-grid">
-          <article class="kpi"><span>VMs observed</span><strong id="vmCount">0</strong><small>Unique billed resource IDs</small></article>
+          <article class="kpi"><span id="entityLabel">VMs observed</span><strong id="vmCount">0</strong><small id="entityDetail">Unique billed VM resource IDs</small></article>
           <article class="kpi"><span>PAYG equivalent</span><strong id="paygEquivalent">$0</strong><small>Actual quantity × contract unit price</small></article>
-          <article class="kpi"><span>Actual cost</span><strong id="actualWithBenefits">$0</strong><small>Azure charges after benefits and commitment waste</small></article>
-          <article class="kpi savings"><span>Net realized savings</span><strong id="netSavings">$0</strong><small id="savingsRate">0.0% savings rate</small></article>
+          <article class="kpi"><span>Actual cost</span><strong id="actualWithBenefits">$0</strong><small id="actualDetail">VM charges after applied benefits; shared waste excluded</small></article>
+          <article class="kpi savings"><span id="savingsLabel">VM usage savings</span><strong id="netSavings">$0</strong><small id="savingsRate">0.0% savings rate</small></article>
         </div>
 
         <div class="analysis-grid">
@@ -69,7 +75,7 @@
 
         <section class="panel trend-panel">
           <div class="section-heading">
-            <div><p class="eyebrow">DAILY COST</p><h2>PAYG equivalent vs actual cost</h2></div>
+            <div><p class="eyebrow">DAILY VM USAGE</p><h2>VM PAYG equivalent vs VM actual cost</h2></div>
             <div class="trend-meta">
               <span id="recordCount" class="muted"></span>
               <div class="legend" aria-label="Chart legend">

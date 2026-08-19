@@ -33,12 +33,21 @@ async function requestJson(url, options) {
   return body;
 }
 
-function render(data) {
-  const { summary } = data;
+let currentData;
+
+function renderView(viewName) {
+  if (!currentData) return;
+  const view = currentData.views[viewName];
+  const { summary } = view;
   const currency = summary.currency || "USD";
   const maximum = Math.max(summary.paygEquivalent, summary.actualWithBenefits, 1);
 
-  elements.vmCount.textContent = data.vmCount.toLocaleString();
+  elements.entityLabel.textContent = view.entityLabel;
+  elements.entityDetail.textContent = view.entityDetail;
+  elements.vmCount.textContent = view.entityCount.toLocaleString();
+  elements.savingsLabel.textContent = view.savingsLabel;
+  elements.viewDescription.textContent = view.description;
+  elements.actualDetail.textContent = view.actualDetail;
   elements.paygEquivalent.textContent = money(summary.paygEquivalent, currency);
   elements.actualWithBenefits.textContent = money(summary.actualWithBenefits, currency);
   elements.netSavings.textContent = money(summary.netSavings, currency);
@@ -65,7 +74,15 @@ function render(data) {
   elements.reservationDetail.textContent = summary.hasReservations
     ? `${money(summary.reservationCost, currency)} used · ${money(summary.unusedReservation, currency)} unused`
     : "No Reserved Instance usage or charges in this period";
-  elements.recordCount.textContent = `${data.vmRecordCount.toLocaleString()} VM records from ${data.sourceRecordCount.toLocaleString()} source records`;
+  elements.recordCount.textContent = `${view.recordCount.toLocaleString()} ${view.recordLabel} from ${currentData.sourceRecordCount.toLocaleString()} source records`;
+}
+
+function render(data) {
+  currentData = data;
+  const { summary } = data.views.vm;
+  const currency = summary.currency || "USD";
+  const activeView = document.querySelector(".view-button.active")?.dataset.view ?? "vm";
+  renderView(activeView);
 
   const dailyMaximum = Math.max(...data.daily.flatMap((day) => [day.paygEquivalent, day.actualWithBenefits]), 1);
   elements.trend.replaceChildren(...data.daily.map((day) => {
@@ -96,6 +113,15 @@ function render(data) {
   elements.warnings.hidden = data.warnings.length === 0;
   elements.dashboard.hidden = false;
 }
+
+document.querySelectorAll(".view-button").forEach((button) => button.addEventListener("click", () => {
+  document.querySelectorAll(".view-button").forEach((candidate) => {
+    const active = candidate === button;
+    candidate.classList.toggle("active", active);
+    candidate.setAttribute("aria-selected", String(active));
+  });
+  renderView(button.dataset.view);
+}));
 
 async function loadStatus() {
   try {
