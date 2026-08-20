@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { blobLinks, isVmSavingsRecord, monthlyDateRanges, parseCostCsv, parseCostCsvStream } from "../src/azure-costs.js";
+import { blobLinks, isNoDataReport, isVmSavingsRecord, monthlyDateRanges, parseCostCsv, parseCostCsvStream } from "../src/azure-costs.js";
 
 describe("Azure cost CSV ingestion", () => {
   it("splits longer periods into calendar-month requests", () => {
@@ -15,6 +15,11 @@ describe("Azure cost CSV ingestion", () => {
     expect(blobLinks({ properties: { manifest: { blobs: [{ blobLink: "https://example.test/cost.csv" }] } } })).toEqual([
       "https://example.test/cost.csv",
     ]);
+  });
+
+  it("recognizes Azure's successful no-data operation result", () => {
+    expect(isNoDataReport({ status: "NoDataFound" })).toBe(true);
+    expect(isNoDataReport({ status: "Completed" })).toBe(false);
   });
 
   it("maps current amortized cost columns and recognizes VM and unused records", () => {
@@ -35,6 +40,7 @@ describe("Azure cost CSV ingestion", () => {
       "Date,ResourceId,ResourceType,ServiceName,PricingModel,ChargeType,Quantity,UnitPrice,CostInBillingCurrency,BillingCurrencyCode\n",
       "07/01/2026,/subscriptions/1/providers/Microsoft.Compute/virtualMachines/vm1,Microsoft.Compute/virtualMachines,Virtual Machines,OnDemand,Usage,1,4,4,USD\n",
       "07/01/2026,/subscriptions/1/providers/Microsoft.Storage/storageAccounts/store1,Microsoft.Storage/storageAccounts,Storage,OnDemand,Usage,1,2,2,USD\n",
+      "07/01/2026,/subscriptions/1/providers/Microsoft.Sql/servers/sql1,Microsoft.Sql/servers,SQL Database,Reservation,Usage,1,8,5,USD\n",
       "07/01/2026,,,,SavingsPlan,UnusedSavingsPlan,1,3,3,USD\n",
     ];
     const encoder = new TextEncoder();
@@ -46,8 +52,8 @@ describe("Azure cost CSV ingestion", () => {
     });
 
     const report = await parseCostCsvStream(body);
-    expect(report.sourceRecordCount).toBe(3);
-    expect(report.records).toHaveLength(2);
-    expect(report.records.map((record) => record.chargeType)).toEqual(["Usage", "UnusedSavingsPlan"]);
+    expect(report.sourceRecordCount).toBe(4);
+    expect(report.records).toHaveLength(3);
+    expect(report.records.map((record) => record.pricingModel)).toEqual(["OnDemand", "Reservation", "SavingsPlan"]);
   });
 });

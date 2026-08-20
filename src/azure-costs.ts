@@ -18,6 +18,8 @@ interface ReportResponse {
   properties?: { manifest?: ReportManifest };
   blobs?: Array<{ blobLink?: string }>;
   blobLink?: string;
+  status?: string;
+  error?: { code?: string; message?: string };
 }
 
 const wait = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -64,6 +66,10 @@ export function blobLinks(report: ReportResponse): string[] {
   const links = (manifest.blobs ?? []).flatMap((blob) => (blob.blobLink ? [blob.blobLink] : []));
   if (manifest.blobLink) links.push(manifest.blobLink);
   return links;
+}
+
+export function isNoDataReport(report: ReportResponse): boolean {
+  return report.status?.trim().toLowerCase() === "nodatafound";
 }
 
 export async function hasAzureSession(): Promise<boolean> {
@@ -134,6 +140,8 @@ async function downloadAmortizedCostRange(
     body: JSON.stringify({ metric: "AmortizedCost", timePeriod: { start, end } }),
   });
 
+  if (createResponse.status === 204) return { records: [], sourceRecordCount: 0 };
+
   let report: ReportResponse;
   if (createResponse.status === 200) {
     report = (await createResponse.json()) as ReportResponse;
@@ -156,7 +164,13 @@ async function downloadAmortizedCostRange(
   }
 
   const links = blobLinks(report);
-  if (links.length === 0) throw new Error("Azure completed the report without any downloadable CSV partitions.");
+  if (links.length === 0) {
+    if (isNoDataReport(report)) return { records: [], sourceRecordCount: 0 };
+    if (report.status?.trim().toLowerCase() === "failed") {
+      throw new Error(`Azure cost report failed: ${report.error?.message ?? report.error?.code ?? "No failure details were returned."}`);
+    }
+    throw new Error(`Azure returned report status "${report.status ?? "unknown"}" without a CSV manifest.`);
+  }
 
   const records: CostRecord[] = [];
   let sourceRecordCount = 0;
@@ -228,7 +242,7 @@ export async function parseCostCsvStream(body: ReadableStream<Uint8Array>): Prom
   for await (const row of parser) {
     sourceRecordCount++;
     const record = costRecord(row as CsvRow);
-    if (isVmSavingsRecord(record)) records.push(record);
+    if (isVmSavingsRecord(record) || isCommitmentRecord(record)) records.push(record);
   }
   return { records, sourceRecordCount };
 }
@@ -245,4 +259,11 @@ export function isVmSavingsRecord(record: CostRecord): boolean {
   const resourceType = record.resourceType.trim().toLowerCase();
   const serviceName = record.serviceName.trim().toLowerCase();
   return resourceType.includes("microsoft.compute/virtualmachines") || serviceName === "virtual machines";
+}
+
+export function isCommitmentRecord(record: CostRecord): boolean {
+  const pricingModel = record.pricingModel.trim().toLowerCase();
+  const chargeType = record.chargeType.trim().toLowerCase();
+  return ["savingsplan", "reservation"].includes(pricingModel)
+    || ["unusedsavingsplan", "unusedsavingplan", "unusedreservation"].includes(chargeType);
 }
