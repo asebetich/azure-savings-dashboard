@@ -25,10 +25,37 @@ npm install
 npm start
 ```
 
-Open `http://127.0.0.1:4173` and enter either:
+Open `http://127.0.0.1:4173` and enter a supported Azure scope.
 
-- `/subscriptions/<subscription-id>`
-- An EA/MCA Microsoft Billing scope copied from Azure Cost Management
+### Supported scopes
+
+Subscription:
+
+```text
+/subscriptions/<subscription-id>
+```
+
+MCA billing profile:
+
+```text
+/providers/Microsoft.Billing/billingAccounts/<billing-account-id>/billingProfiles/<billing-profile-id>
+```
+
+MCA customer:
+
+```text
+/providers/Microsoft.Billing/billingAccounts/<billing-account-id>/customers/<customer-id>
+```
+
+EA billing account:
+
+```text
+/providers/Microsoft.Billing/billingAccounts/<billing-account-id>
+```
+
+Copy the exact billing scope from **Cost Management + Billing > Cost Management > Scope** in the Azure portal. The signed-in identity needs `Cost Management Reader` at that scope.
+
+For the most complete **Commitment overview**, use an EA or MCA billing scope. A subscription report can omit centrally shared usage and unallocated Savings Plan or reservation costs.
 
 Choose a completed date range of no more than 13 months. The application splits longer ranges into monthly Azure requests, polls until each report is ready, and downloads every CSV partition. The views separate costs that Azure can and cannot attribute:
 
